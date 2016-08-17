@@ -7,14 +7,6 @@ module Fluent
     include SetTimeKeyMixin
     include SetTagKeyMixin
 
-    # For fluentd v0.12.16 or earlier
-    class << self
-      unless method_defined?(:desc)
-        def desc(description)
-        end
-      end
-    end
-
     desc 'RDBMS host'
     config_param :host, :string
     desc 'RDBMS port'
@@ -35,10 +27,6 @@ module Fluent
     config_param :enable_fallback, :bool, default: true
 
     attr_accessor :tables
-
-    unless method_defined?(:log)
-      define_method(:log) { $log }
-    end
 
     # TODO: Merge SQLInput's TableElement
     class TableElement
