@@ -111,4 +111,35 @@ class SqlOutputTest < Test::Unit::TestCase
       end
     end
   end
+
+  class WithdrawingLabel < self
+    def test_default
+      conf = CONFIG + %[
+               discard_error_records false
+             ]
+      d = create_driver(conf)
+
+      time = Time.parse("2011-01-02 13:14:15 UTC").to_i
+
+      d.emit({"message" => "message1"}, time)
+      d.emit({"message" => "message2"}, time)
+
+      d.run do
+        default_table = d.instance.instance_variable_get(:@default_table)
+        model = default_table.instance_variable_get(:@model)
+        mock(model).import([anything, anything]).once do
+          raise ActiveRecord::Import::MissingColumnError.new("dummy_table", "dummy_column")
+        end
+        mock(model).import([anything]).times(12) do
+          raise StandardError
+        end
+        dummy_label = Object.new
+        dummy_router = Object.new
+        mock(dummy_router).emit_stream("test", anything)
+        mock(dummy_label).event_router { dummy_router }
+
+        mock(Fluent::Engine.root_agent).find_label("@OUT_SQL_WITHDRAW") { dummy_label }
+      end
+    end
+  end
 end

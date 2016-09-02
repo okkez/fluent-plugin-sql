@@ -33,6 +33,10 @@ module Fluent
     config_param :remove_tag_prefix, :string, :default => nil
     desc 'enable fallback'
     config_param :enable_fallback, :bool, :default => true
+    desc 'Discard error records if fallback sequence is failed'
+    config_param :discard_error_records, :bool, :default => true
+    desc 'The label name to handle error records'
+    config_param :withdrawing_label, :string, :default => "@OUT_SQL_WITHDRAW"
 
     attr_accessor :tables
 
@@ -51,11 +55,13 @@ module Fluent
       attr_reader :model
       attr_reader :pattern
 
-      def initialize(pattern, log, enable_fallback)
+      def initialize(pattern, log, enable_fallback, discard_error_records, withdrawing_label)
         super()
         @pattern = MatchPattern.create(pattern)
         @log = log
         @enable_fallback = enable_fallback
+        @discard_error_records = discard_error_records
+        @withdrawing_label = withdrawing_label
       end
 
       def configure(conf)
@@ -77,6 +83,7 @@ module Fluent
         @model = Class.new(base_model) do
           self.table_name = table_name
           self.inheritance_column = '_never_use_output_'
+          attr_accessor :original_tag, :original_time
         end
 
         class_name = table_name.singularize.camelize
@@ -93,7 +100,10 @@ module Fluent
         chunk.msgpack_each { |tag, time, data|
           begin
             # format process should be moved to emit / format after supports error stream.
-            records << @model.new(@format_proc.call(data))
+            record = @model.new(@format_proc.call(data))
+            record.original_tag = tag
+            record.original_time = time
+            records << record
           rescue => e
             args = {:error => e.message, :error_class => e.class, :table => @table, :record => Yajl.dump(data)}
             @log.warn "Failed to create the model. Ignore a record:", args
@@ -114,16 +124,27 @@ module Fluent
       end
 
       def one_by_one_import(records)
-        records.each { |record|
+        error_records = []
+        records.each do |record|
           retries = 0
           begin
             @model.import([record])
           rescue ActiveRecord::StatementInvalid, ActiveRecord::Import::MissingColumnError => e
-            @log.error "Got deterministic error again. Dump a record", :error => e.message, :error_class => e.class, :record => record
+            if @discard_error_records
+              @log.error "Got deterministic error again. Dump a record", :error => e.message, :error_class => e.class, :record => record
+            else
+              @log.debug "Got deterministic error again. Store a record", :error => e.message, :error_class => e.class, :record => record
+              error_records << record
+            end
           rescue => e
             retries += 1
             if retries > @num_retries
-              @log.error "Can't recover undeterministic error. Dump a record", :error => e.message, :error_class => e.class, :record => record
+              if @discard_error_records
+                @log.error "Can't recover undeterministic error. Dump a record", :error => e.message, :error_class => e.class, :record => record
+              else
+                @log.debug "Can't recover undeterministic error. Store a record", :error => e.message, :error_class => e.class, :record => record
+                error_records << record
+              end
               next
             end
 
@@ -131,7 +152,17 @@ module Fluent
             sleep 0.5
             retry
           end
-        }
+        end
+        unless error_records.empty?
+          label = Fluent::Engine.root_agent.find_label(@withdrawing_label)
+          error_records.group_by(&:original_tag).each do |tag, group_records|
+            es = Fluent::MultiEventStream.new
+            group_records.each do |record|
+              es.add(record.original_time, record)
+            end
+            label.event_router.emit_stream(tag, es)
+          end
+        end
       end
 
       private
@@ -165,7 +196,7 @@ module Fluent
       conf.elements.select { |e|
         e.name == 'table'
       }.each { |e|
-        te = TableElement.new(e.arg, log, @enable_fallback)
+        te = TableElement.new(e.arg, log, @enable_fallback, @discard_error_records, @withdrawing_label)
         te.configure(e)
         if e.arg.empty?
           $log.warn "Detect duplicate default table definition" if @default_table
