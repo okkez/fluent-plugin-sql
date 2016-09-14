@@ -99,7 +99,7 @@ class SqlOutputTest < Test::Unit::TestCase
       d.run(default_tag: "test") do
         d.feed(time, {"message" => "message1"})
         d.feed(time, {"message" => "message2"})
-        
+
         default_table = d.instance.instance_variable_get(:@default_table)
         model = default_table.instance_variable_get(:@model)
         mock(model).import([anything, anything]).once do
