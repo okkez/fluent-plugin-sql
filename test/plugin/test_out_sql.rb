@@ -1,4 +1,5 @@
 require "helper"
+require "fluent/test/driver/output"
 
 class SqlOutputTest < Test::Unit::TestCase
   def setup
@@ -26,7 +27,7 @@ class SqlOutputTest < Test::Unit::TestCase
   ]
 
   def create_driver(conf = CONFIG)
-    Fluent::Test::BufferedOutputTestDriver.new(Fluent::SQLOutput).configure(conf)
+    Fluent::Test::Driver::Output.new(Fluent::Plugin::SQLOutput).configure(conf)
   end
 
   def test_configure
@@ -59,12 +60,12 @@ class SqlOutputTest < Test::Unit::TestCase
 
   def test_emit
     d = create_driver
-    time = Time.parse("2011-01-02 13:14:15 UTC").to_i
+    time = event_time("2011-01-02 13:14:15 UTC")
 
-    d.emit({"message" => "message1"}, time)
-    d.emit({"message" => "message2"}, time)
-
-    d.run
+    d.run(default_tag: "test") do
+      d.feed(time, {"message" => "message1"})
+      d.feed(time, {"message" => "message2"})
+    end
 
     default_table = d.instance.instance_variable_get(:@default_table)
     model = default_table.instance_variable_get(:@model)
@@ -76,12 +77,12 @@ class SqlOutputTest < Test::Unit::TestCase
   class Fallback < self
     def test_simple
       d = create_driver
-      time = Time.parse("2011-01-02 13:14:15 UTC").to_i
+      time = event_time("2011-01-02 13:14:15 UTC")
 
-      d.emit({"message" => "message1"}, time)
-      d.emit({"message" => "message2"}, time)
+      d.run(default_tag: "test") do
+        d.feed(time, {"message" => "message1"})
+        d.feed(time, {"message" => "message2"})
 
-      d.run do
         default_table = d.instance.instance_variable_get(:@default_table)
         model = default_table.instance_variable_get(:@model)
         mock(model).import(anything).at_least(1) do
@@ -93,12 +94,12 @@ class SqlOutputTest < Test::Unit::TestCase
 
     def test_limit
       d = create_driver
-      time = Time.parse("2011-01-02 13:14:15 UTC").to_i
+      time = event_time("2011-01-02 13:14:15 UTC")
 
-      d.emit({"message" => "message1"}, time)
-      d.emit({"message" => "message2"}, time)
-
-      d.run do
+      d.run(default_tag: "test") do
+        d.feed(time, {"message" => "message1"})
+        d.feed(time, {"message" => "message2"})
+        
         default_table = d.instance.instance_variable_get(:@default_table)
         model = default_table.instance_variable_get(:@model)
         mock(model).import([anything, anything]).once do
