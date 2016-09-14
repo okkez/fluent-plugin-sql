@@ -200,7 +200,6 @@ module Fluent::Plugin
 
     def write(chunk)
       ActiveRecord::Base.connection_pool.with_connection do
-
         @tables.each { |table|
           if table.pattern.match(chunk.key)
             return table.import(chunk)
