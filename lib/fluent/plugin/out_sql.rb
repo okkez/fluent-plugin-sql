@@ -138,7 +138,7 @@ module Fluent::Plugin
     end
 
     def configure(conf)
-      compat_parameters_convert(conf, :inject)
+      compat_parameters_convert(conf, :inject, :buffer)
 
       super
 
