@@ -16,14 +16,15 @@
 #    limitations under the License.
 #
 
-require "fluent/input"
+require "fluent/plugin/input"
+require "fluent/configurable"
+require "active_record"
 
-module Fluent
+module Fluent::Plugin
+  class SQLInput < Fluent::Plugin::Input
+    Fluent::Plugin.register_input('sql', self)
 
-  require 'active_record'
-
-  class SQLInput < Input
-    Plugin.register_input('sql', self)
+    helpers :thread
 
     desc 'RDBMS host'
     config_param :host, :string
@@ -50,7 +51,7 @@ module Fluent
     config_param :select_limit, :time, default: 500
 
     class TableElement
-      include Configurable
+      include Fluent::Configurable
 
       config_param :table, :string
       config_param :tag, :string, default: nil
@@ -113,9 +114,9 @@ module Fluent
         relation = relation.order("#{@update_column} ASC")
         relation = relation.limit(limit) if limit > 0
 
-        now = Engine.now
+        now = Fluent::Engine.now
 
-        me = MultiEventStream.new
+        me = Fluent::MultiEventStream.new
         relation.each do |obj|
           record = obj.serializable_hash rescue nil
           if record
@@ -222,18 +223,15 @@ module Fluent
         end
       end
 
-      @stop_flag = false
-      @thread = Thread.new(&method(:thread_main))
+      thread_create(:in_sql) { thread_main }
     end
 
     def shutdown
-      @stop_flag = true
       $log.debug "Waiting for thread to finish"
-      @thread.join
     end
 
     def thread_main
-      until @stop_flag
+      while thread_current_running?
         sleep @select_interval
 
         begin
